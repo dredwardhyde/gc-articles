@@ -174,7 +174,7 @@ void JNIHandles::oops_do(OopClosure* f) {
 }
 ```
 List of global JNI handles resides in JNIHandles class:
-```
+```cpp
 class JNIHandles : AllStatic {
   friend class VMStructs;
  private:
@@ -183,6 +183,66 @@ class JNIHandles : AllStatic {
 }
 ```
 In general, **OopStorage** is container for thread-safe (sometimes concurrent) interactions with off-heap references to objects allocated in the Java heap. The garbage collector must know about all OopStorage objects and their reference strength. OopStorage provides the garbage collector with support for iteration over all the allocated entries.
+And every **OopStorage** internally contains set of **Blocks** objects, and **Block** itself contains an **oop[]** and a bitmask indicating which entries are in use (have been allocated and not yet released).
+**oops_do()** on **OopStorage** eventually calls **iterate_impl()** method, which iterates over **Block**:
+```cpp
+// Support for serial iteration, always at a safepoint.
+// Provide const or non-const iteration, depending on whether Storage is
+// const OopStorage* or OopStorage*, respectively.
+template<typename F, typename Storage> // Storage := [const] OopStorage
+inline bool OopStorage::iterate_impl(F f, Storage* storage) {
+  assert_at_safepoint();
+  // Propagate const/non-const iteration to the block layer, by using
+  // const or non-const blocks as corresponding to Storage.
+  typedef typename Conditional<IsConst<Storage>::value, const Block*, Block*>::type BlockPtr;
+  ActiveArray* blocks = storage->_active_array;
+  size_t limit = blocks->block_count();
+  for (size_t i = 0; i < limit; ++i) {
+    BlockPtr block = blocks->at(i);
+    if (!block->iterate(f)) {
+      return false;
+    }
+  }
+  return true;
+}
+```
+And then with each **Block** iterates over all stored **oops** in **_data** array:
+```cpp
+// Provide const or non-const iteration, depending on whether BlockPtr
+// is const Block* or Block*, respectively.
+template<typename F, typename BlockPtr> // BlockPtr := [const] Block*
+inline bool OopStorage::Block::iterate_impl(F f, BlockPtr block) {
+  uintx bitmask = block->allocated_bitmask();
+  while (bitmask != 0) {
+    unsigned index = count_trailing_zeros(bitmask);
+    bitmask ^= block->bitmask_for_index(index);
+    if (!f(block->get_pointer(index))) {
+      return false;
+    }
+  }
+  return true;
+}
+```
+```cpp
+// Fixed-sized array of oops, plus bookkeeping data.
+// All blocks are in the storage's _active_array, at the block's _active_index.
+// Non-full blocks are in the storage's _allocation_list, linked through the
+// block's _allocation_list_entry.  Empty blocks are at the end of that list.
+class OopStorage::Block /* No base class, to avoid messing up alignment. */ {
+  // _data must be the first non-static data member, for alignment.
+  oop _data[BitsPerWord];
+  static const unsigned _data_pos = 0; // Position of _data.
+
+  volatile uintx _allocated_bitmask; // One bit per _data element.
+  ...
+}
+```
+
+
+
+
+
+
 
 
 
