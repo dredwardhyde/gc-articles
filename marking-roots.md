@@ -33,7 +33,7 @@ In Hotspot roots are following objects:
 - For each java thread then all locals and JNI local references on the thread's execution stack
 - All visible/explainable objects from Universes::oops_do
 
-Later I will explain every step in details using Parallel Garbage collector as an example.
+Later I will explain every step in details using Parallel Garbage collector as an example because of very simple and readable implementation.
 
 Marking roots in Parallel GC starts from method **do_it** in **hotspot/share/gc/parallel/pcTasks.cpp**
 ```cpp
