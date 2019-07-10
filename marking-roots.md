@@ -93,13 +93,14 @@ void MarkFromRootsTask::do_it(GCTaskManager* manager, uint which) {
 }
 ```
 
-First step in that method is to mark all objects in Universe - namespace holding known system classes and objects in the VM. 
-<<< write more about Universe and Universe::genesis(TRAPS)>>>  
-It happens in **oops_do** method in **hotspot/share/memory/universe.cpp**
+First step in the method above is to mark some objects in **Universe** - namespace holding known system classes and objects in the VM. Whole initial world initialization, like loading basic classes, **vmSymbols::initialize()**, **SystemDictionary::initialize()** and various necessary object allocations happens in **Universe::genesis()**.
+So we need to mark some of them in **oops_do** method in **hotspot/share/memory/universe.cpp**
 ```cpp
 void Universe::oops_do(OopClosure* f) {
 
   // Primitive objects
+  // Here we mark all primitive type mirrors classes (like int.class, long.class, etc) 
+  // created in Universe::initialize_basic_type_mirrors()
   f->do_oop((oop*) &_int_mirror);
   f->do_oop((oop*) &_float_mirror);
   f->do_oop((oop*) &_double_mirror);
@@ -164,5 +165,62 @@ void Universe::oops_do(OopClosure* f) {
   // References waiting to be transferred to the ReferenceHandler
   f->do_oop((oop*)&_reference_pending_list);
   debug_only(f->do_oop((oop*)&_fullgc_alot_dummy_array);)
+}
+```
+Second step is to mark global JNI references by JNI handles in **hotspot/share/runtime/jniHandles.cpp**.
+```cpp
+void JNIHandles::oops_do(OopClosure* f) {
+  global_handles()->oops_do(f);
+}
+```
+List of global JNI handles resides in JNIHandles class:
+```
+class JNIHandles : AllStatic {
+  friend class VMStructs;
+ private:
+  static OopStorage* _global_handles;
+  ...
+}
+```
+In general, **OopStorage** is container for thread-safe (sometimes concurrent) interactions with off-heap references to objects allocated in the Java heap. The garbage collector must know about all OopStorage objects and their reference strength. OopStorage provides the garbage collector with support for iteration over all the allocated entries.
+
+
+
+```cpp
+void JNIHandleBlock::oops_do(OopClosure* f) {
+  JNIHandleBlock* current_chain = this;
+  // Iterate over chain of blocks, followed by chains linked through the
+  // pop frame links.
+  while (current_chain != NULL) {
+    for (JNIHandleBlock* current = current_chain; current != NULL;
+         current = current->_next) { // Link to next block
+      ...
+      for (int index = 0; index < current->_top; index++) {
+        oop* root = &(current->_handles)[index];
+        oop value = *root;
+        // traverse heap pointers only, not deleted handles or free list
+        // pointers
+        if (value != NULL && Universe::heap()->is_in_reserved(value)) {
+          f->do_oop(root);
+        }
+      }
+      // the next handle block is valid only if current block is full
+      if (current->_top < block_size_in_oops) {
+        break;
+      }
+    }
+    current_chain = current_chain->pop_frame_link();
+  }
+}
+```
+JNIHandleBlock contains strong roots - references to Java objects that were passed as parameters to JNI methods.
+JNI method is unmanaged area, so those objects are considered alive:
+
+```cpp
+class JNIHandleBlock : public CHeapObj<mtInternal> {
+  ...
+ private:
+  ...
+  oop             _handles[block_size_in_oops]; // The handles to Java objects allocated in heap
 }
 ```
