@@ -93,3 +93,76 @@ void MarkFromRootsTask::do_it(GCTaskManager* manager, uint which) {
 }
 ```
 
+First step in that method is to mark all objects in Universe - namespace holding known system classes and objects in the VM. 
+<<< write more about Universe and Universe::genesis(TRAPS)>>>  
+It happens in **oops_do** method in **hotspot/share/memory/universe.cpp**
+```cpp
+void Universe::oops_do(OopClosure* f) {
+
+  // Primitive objects
+  f->do_oop((oop*) &_int_mirror);
+  f->do_oop((oop*) &_float_mirror);
+  f->do_oop((oop*) &_double_mirror);
+  f->do_oop((oop*) &_byte_mirror);
+  f->do_oop((oop*) &_bool_mirror);
+  f->do_oop((oop*) &_char_mirror);
+  f->do_oop((oop*) &_long_mirror);
+  f->do_oop((oop*) &_short_mirror);
+  f->do_oop((oop*) &_void_mirror);
+
+  for (int i = T_BOOLEAN; i < T_VOID+1; i++) {
+    f->do_oop((oop*) &_mirrors[i]);
+  }
+  assert(_mirrors[0] == NULL && _mirrors[T_BOOLEAN - 1] == NULL, "checking");
+
+  // Canonicalized obj array of type java.lang.Class
+  f->do_oop((oop*)&_the_empty_class_klass_array);
+
+  // A unique object pointer unused except as a sentinel for null.
+  f->do_oop((oop*)&_the_null_sentinel);
+
+  // A cache of "null" as a Java string
+  f->do_oop((oop*)&_the_null_string);
+
+  // A cache of "-2147483648" as a Java string
+  f->do_oop((oop*)&_the_min_jint_string);
+
+  // preallocated error objects (no backtrace)
+  f->do_oop((oop*)&_out_of_memory_error_java_heap);
+  f->do_oop((oop*)&_out_of_memory_error_metaspace);
+  f->do_oop((oop*)&_out_of_memory_error_class_metaspace);
+  f->do_oop((oop*)&_out_of_memory_error_array_size);
+  f->do_oop((oop*)&_out_of_memory_error_gc_overhead_limit);
+  f->do_oop((oop*)&_out_of_memory_error_realloc_objects);
+  f->do_oop((oop*)&_out_of_memory_error_retry);
+
+  // preallocated cause message for delayed StackOverflowError
+  f->do_oop((oop*)&_delayed_stack_overflow_error_message);
+
+  // array of preallocated error objects with backtrace
+  f->do_oop((oop*)&_preallocated_out_of_memory_error_array);
+
+  // preallocated exception object
+  f->do_oop((oop*)&_null_ptr_exception_instance);
+
+  // preallocated exception object
+  f->do_oop((oop*)&_arithmetic_exception_instance);
+
+  // preallocated exception object
+  f->do_oop((oop*)&_virtual_machine_error_instance);
+
+  // Reference to the main thread group object
+  f->do_oop((oop*)&_main_thread_group);
+
+  // Reference to the system thread group object
+  f->do_oop((oop*)&_system_thread_group);
+
+  // The object used as an exception dummy when exceptions are thrown for
+  // the vm thread.
+  f->do_oop((oop*)&_vm_exception);
+
+  // References waiting to be transferred to the ReferenceHandler
+  f->do_oop((oop*)&_reference_pending_list);
+  debug_only(f->do_oop((oop*)&_fullgc_alot_dummy_array);)
+}
+```
