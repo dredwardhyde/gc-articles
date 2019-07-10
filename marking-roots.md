@@ -184,6 +184,7 @@ class JNIHandles : AllStatic {
 ```
 In general, **OopStorage** is container for thread-safe (sometimes concurrent) interactions with off-heap references to objects allocated in the Java heap. The garbage collector must know about all OopStorage objects and their reference strength. OopStorage provides the garbage collector with support for iteration over all the allocated entries.
 And every **OopStorage** internally contains set of **Blocks** objects, and **Block** itself contains an **oop[]** and a bitmask indicating which entries are in use (have been allocated and not yet released).
+**_global_handles** contains JNI handles for ArrayOutOfBoundsException, ArrayStoreException, ClassCastException, classloaders, oop wrappers used by JIT compilers, compilers threads themselves, etc.
 **oops_do()** on **OopStorage** eventually calls **iterate_impl()** method, which iterates over **Block**:
 ```cpp
 // Support for serial iteration, always at a safepoint.
