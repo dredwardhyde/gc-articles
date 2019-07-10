@@ -35,5 +35,61 @@ In Hotspot roots are following objects:
 
 Later I will explain every step in details using Parallel Garbage collector as an example.
 
+Marking roots in Parallel GC starts from method **do_it** in **hotspot/share/gc/parallel/pcTasks.cpp**
+```cpp
+void MarkFromRootsTask::do_it(GCTaskManager* manager, uint which) {
+  ...
+  PCMarkAndPushClosure mark_and_push_closure(cm);
+  ...
+  switch (_root_type) {
+    case universe:
+      Universe::oops_do(&mark_and_push_closure);
+      break;
 
+    case jni_handles:
+      JNIHandles::oops_do(&mark_and_push_closure);
+      break;
+
+    case threads:
+    {
+      ResourceMark rm;
+      MarkingCodeBlobClosure each_active_code_blob(&mark_and_push_closure, !CodeBlobToOopClosure::FixRelocations);
+      Threads::oops_do(&mark_and_push_closure, &each_active_code_blob);
+    }
+    break;
+
+    case object_synchronizer:
+      ObjectSynchronizer::oops_do(&mark_and_push_closure);
+      break;
+
+    case management:
+      Management::oops_do(&mark_and_push_closure);
+      break;
+
+    case jvmti:
+      JvmtiExport::oops_do(&mark_and_push_closure);
+      break;
+
+    case system_dictionary:
+      SystemDictionary::oops_do(&mark_and_push_closure);
+      break;
+
+    case class_loader_data: {
+        CLDToOopClosure cld_closure(&mark_and_push_closure, ClassLoaderData::_claim_strong);
+        ClassLoaderDataGraph::always_strong_cld_do(&cld_closure);
+      }
+      break;
+
+    case code_cache:
+      // Do not treat nmethods as strong roots for mark/sweep, since we can unload them.
+      //CodeCache::scavenge_root_nmethods_do(CodeBlobToOopClosure(&mark_and_push_closure));
+      AOTLoader::oops_do(&mark_and_push_closure);
+      break;
+
+    default:
+      fatal("Unknown root type");
+  }
+  ...
+}
+```
 
