@@ -367,4 +367,97 @@ class ObjectMonitor {
   ...
   void*     volatile _object;       // backward object pointer - strong root
 ```
-Next major step in **JavaThread::oops_do()** is traversal of execution stack of current thread.  
+Next major step in **JavaThread::oops_do()** is traversal of execution stack of current thread. What is execution stack? It's a group of frames, some of them are from native methods (like JIT compiled), some - from interpretered, and others are just StubRoutine entries. And every such frame contains local variables and passed parameters that act like strong roots during garbage collection. So we need to identify them and mark. Marking roots in **frame** starts in **frame::oops_do_internal()** method: 
+```cpp
+void frame::oops_do_internal(OopClosure* f, CodeBlobClosure* cf, RegisterMap* map, bool use_interpreter_oop_map_cache) {
+  ...
+  //interpreted frame
+  if (is_interpreted_frame()) {
+    oops_interpreted_do(f, map, use_interpreter_oop_map_cache);
+    // entry frame for one of StubRoutines defined in hotspot/share/runtime/stubRoutines.cpp
+    // StubRoutines provides entry points to assembly routines used by
+    // compiled code and the run-time system. Platform-specific entry
+    // points are defined in the platform-specific inner class.
+  } else if (is_entry_frame()) {
+    oops_entry_do(f, map);
+  } else if (CodeCache::contains(pc())) {
+    oops_code_blob_do(f, cf, map);
+  } else {
+    ShouldNotReachHere();
+  }
+}
+```
+If frame is **StubRoutine** entry, then we need to mark passed arguments, the receiver of the call (if a non-static call) and objects saved in **JNIHandleBlock** blocks:
+```cpp
+// hotspot/share/runtime/stubRoutines.cpp
+class JavaCallWrapper: StackObj {
+  ...
+ private:
+  JavaThread*      _thread;                 // the thread to which this call belongs
+  JNIHandleBlock*  _handles;                // the saved handle block
+  Method*          _callee_method;          // to be able to collect arguments if entry frame is top frame
+  oop              _receiver;               // the receiver of the call (if a non-static call)
+}
+
+// hotspot/share/runtime/frame.cpp
+void frame::oops_entry_do(OopClosure* f, const RegisterMap* map) {
+  ...
+  if (map->include_argument_oops()) {
+    // must collect argument oops, as nobody else is doing it
+    Thread *thread = Thread::current();
+    methodHandle m (thread, entry_frame_call_wrapper()->callee_method());
+    EntryFrameOopFinder finder(this, m->signature(), m->is_static());
+    finder.arguments_do(f);
+  }
+  // Traverse the Handle Block saved in the entry frame
+  entry_frame_call_wrapper()->oops_do(f);
+}
+```
+If frame is interpreted, then **frame::oops_interpreted_do()** method is called. Here we mark **BasicObjectLock** objects because they contain references to Java objects, just like inflated locks. And then we need to mark all local references inside the current frame. That's where **OopMapCache** is used - this cache holds location of object references in an interpreted frame:
+```cpp
+void frame::oops_interpreted_do(OopClosure* f, const RegisterMap* map, bool query_oop_map_cache) {
+  ...
+  Thread *thread = Thread::current();
+  methodHandle m (thread, interpreter_frame_method());
+  jint      bci = interpreter_frame_bci();
+  ...
+  // Handle the monitor elements in the activation
+  for ( BasicObjectLock* current = interpreter_frame_monitor_end();
+        current < interpreter_frame_monitor_begin();
+        current = next_monitor_in_interpreter_frame(current)) {
+    ...
+    current->oops_do(f);
+  }
+  //
+  if (m->is_native()) {
+    f->do_oop(interpreter_frame_temp_oop_addr());
+  }
+
+  // The method pointer in the frame might be the only path to the method's
+  // klass, and the klass needs to be kept alive while executing.
+  f->do_oop(interpreter_frame_mirror_addr());
+
+  // Process a callee's arguments if we are at a call site (i.e., if we are at an invoke bytecode)
+  ... marking arguments here ...
+  ...
+  // process locals & expression stack
+  InterpreterOopMap mask;
+  if (query_oop_map_cache) {
+    m->mask_for(bci, &mask);
+  } else {
+    OopMapCache::compute_one_oop_map(m, bci, &mask);
+  }
+  ...
+}
+```
+There is only one instance of **OopMapCache** per **InstanceKlass** (VM level representation of a Java class) and it must be allocated lazily at first request. Then it will be queried and populated in **OopMapCache::lookup()** method. But there is a subtle detail in lookup of **OopMapCache** - it happens at the **global safepoint**. It means average depth of execution stacks is dramatically influence duration of stop-the-world pause caused by root marking. That schema is used even in the most modern garbage collectors, like G1 and Shenandoah.
+```cpp
+// Called by GC for thread root scan during a safepoint only.  The other interpreted frame oopmaps
+// are generated locally and not cached.
+void OopMapCache::lookup(const methodHandle& method, int bci, InterpreterOopMap* entry_for) {
+  assert(SafepointSynchronize::is_at_safepoint(), "called by GC in a safepoint");
+  ...
+}
+```
+
+
