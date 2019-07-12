@@ -266,54 +266,36 @@ We iterate over all Threads using *"the ugliest for loop the world has seen"*:
 #define ALL_JAVA_THREADS(X) DO_JAVA_THREADS(ThreadsSMRSupport::get_java_thread_list(), X)
 ```
 and call **JavaThread::oops_do(OopClosure\* f, CodeBlobClosure\* cf)**:
-```
+```cpp
 void JavaThread::oops_do(OopClosure* f, CodeBlobClosure* cf) {
-  // Verify that the deferred card marks have been flushed.
-  assert(deferred_card_mark().is_empty(), "Should be empty during GC");
-
+  ...
   // Traverse the GCHandles
   Thread::oops_do(f, cf);
-
-  assert((!has_last_Java_frame() && java_call_counter() == 0) ||
-         (has_last_Java_frame() && java_call_counter() > 0), "wrong java_sp info!");
-
+  ...
   if (has_last_Java_frame()) {
-    // Record JavaThread to GC thread
-    RememberProcessedThread rpt(this);
-
+    ...
     // traverse the registered growable array
     if (_array_for_gc != NULL) {
       for (int index = 0; index < _array_for_gc->length(); index++) {
         f->do_oop(_array_for_gc->adr_at(index));
       }
     }
-
     // Traverse the monitor chunks
     for (MonitorChunk* chunk = monitor_chunks(); chunk != NULL; chunk = chunk->next()) {
       chunk->oops_do(f);
     }
-
     // Traverse the execution stack
     for (StackFrameStream fst(this); !fst.is_done(); fst.next()) {
       fst.current()->oops_do(f, cf, fst.register_map());
     }
   }
-
-  // callee_target is never live across a gc point so NULL it here should
-  // it still contain a methdOop.
-
-  set_callee_target(NULL);
-
-  assert(vframe_array_head() == NULL, "deopt in progress at a safepoint!");
-  // If we have deferred set_locals there might be oops waiting to be
-  // written
+  ...
   GrowableArray<jvmtiDeferredLocalVariableSet*>* list = deferred_locals();
   if (list != NULL) {
     for (int i = 0; i < list->length(); i++) {
       list->at(i)->oops_do(f);
     }
   }
-
   // Traverse instance variables at the end since the GC may be moving things
   // around using this function
   f->do_oop((oop*) &_threadObj);
@@ -326,9 +308,29 @@ void JavaThread::oops_do(OopClosure* f, CodeBlobClosure* cf) {
   }
 }
 ```
+In **Thread::oops_do()** we mark all active JNI handles, possible **\_pending_exception** that is about to be thrown, all thread local handles in **HandleArea\* \_handle_area** reserved for allocation of handles within the VM and thread local monitors:
+```cpp
+void Thread::oops_do(OopClosure* f, CodeBlobClosure* cf) {
+  active_handles()->oops_do(f);
+  // Do oop for ThreadShadow
+  f->do_oop((oop*)&_pending_exception);
+  handle_area()->oops_do(f);
 
-
-
+  // We scan thread local monitor lists here, and the remaining global
+  // monitors in ObjectSynchronizer::oops_do().
+  ObjectSynchronizer::thread_local_used_oops_do(this, f);
+}
+```
+In **active_handles()->oops_do(f)** we traverse and mark all active JNI handles for each thread, because every **JNIHandleBlock** in **JNIHandleBlock\* \_active_handles** contains strong roots - references to Java objects that were passed as parameters to JNI methods:
+```cpp
+class JNIHandleBlock : public CHeapObj<mtInternal> {
+  ...
+ private:
+  ...
+  oop             _handles[block_size_in_oops]; // The handles to Java objects allocated in heap
+}
+```
+JNI methods are unmanaged area, so objects passed as parameters are considered alive, we need to mark them:
 ```cpp
 void JNIHandleBlock::oops_do(OopClosure* f) {
   JNIHandleBlock* current_chain = this;
@@ -356,14 +358,14 @@ void JNIHandleBlock::oops_do(OopClosure* f) {
   }
 }
 ```
-JNIHandleBlock contains strong roots - references to Java objects that were passed as parameters to JNI methods.
-JNI method is unmanaged area, so those objects are considered alive:
-
+Each thread could hold arbitrary number of inflated locks - **ObjectMonitor** objects. All of them must be marked because they contain backward object pointers:
 ```cpp
-class JNIHandleBlock : public CHeapObj<mtInternal> {
-  ...
+class ObjectMonitor {
+ ...
  private:
   ...
-  oop             _handles[block_size_in_oops]; // The handles to Java objects allocated in heap
-}
+  void*     volatile _object;       // backward object pointer - strong root
 ```
+We mark those thread local inflated locks in **ObjectSynchronizer::thread_local_used_oops_do()** method.
+
+Next, we need to mark all 
