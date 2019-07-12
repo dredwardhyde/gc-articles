@@ -93,7 +93,7 @@ void MarkFromRootsTask::do_it(GCTaskManager* manager, uint which) {
 }
 ```
 
-First step in the method above is to mark some objects in **Universe** - namespace holding known system classes and objects in the VM. Whole initial world initialization, like loading basic classes, **vmSymbols::initialize()**, **SystemDictionary::initialize()** and various necessary object allocations happens in **Universe::genesis()**.
+**First step** in the method above is to mark some objects in **Universe** - namespace holding known system classes and objects in the VM. Whole initial world initialization, like loading basic classes, **vmSymbols::initialize()**, **SystemDictionary::initialize()** and various necessary object allocations happens in **Universe::genesis()**.
 So we need to mark some of them in **oops_do** method in **hotspot/share/memory/universe.cpp**
 ```cpp
 void Universe::oops_do(OopClosure* f) {
@@ -167,7 +167,7 @@ void Universe::oops_do(OopClosure* f) {
   debug_only(f->do_oop((oop*)&_fullgc_alot_dummy_array);)
 }
 ```
-Second step is to mark global JNI references by JNI handles in **hotspot/share/runtime/jniHandles.cpp**.
+**Second step** is to mark global JNI references by JNI handles in **hotspot/share/runtime/jniHandles.cpp**.
 ```cpp
 void JNIHandles::oops_do(OopClosure* f) {
   global_handles()->oops_do(f);
@@ -182,10 +182,7 @@ class JNIHandles : AllStatic {
   ...
 }
 ```
-In general, **OopStorage** is container for thread-safe (sometimes concurrent) interactions with off-heap references to objects allocated in the Java heap. The garbage collector must know about all OopStorage objects and their reference strength. OopStorage provides the garbage collector with support for iteration over all the allocated entries.
-And every **OopStorage** internally contains set of **Blocks** objects, and **Block** itself contains an **oop[]** and a bitmask indicating which entries are in use (have been allocated and not yet released).
-**_global_handles** contains JNI handles for ArrayOutOfBoundsException, ArrayStoreException, ClassCastException, classloaders, oop wrappers used by JIT compilers, compilers threads themselves, etc.
-**oops_do()** on **OopStorage** eventually calls **iterate_impl()** method, which iterates over **Block**:
+In general, **OopStorage** is container for thread-safe (sometimes concurrent) interactions with off-heap references to objects allocated in the Java heap. **_global_handles** contains JNI handles for ArrayOutOfBoundsException, ArrayStoreException, ClassCastException, classloaders, oop wrappers used by JIT compilers, compilers threads themselves, etc. Internally every **OopStorage** contains set of **Blocks** objects, and **Block** itself contains an **oop[]** and a bitmask indicating which entries are in use (have been allocated and not yet released). During garbage collection, collector must know about all OopStorage objects and their reference strength, and each OopStorage provides the garbage collector with support for iteration over all the allocated entries. So **oops_do()** on **OopStorage** eventually calls **iterate_impl()** method, which iterates over **Block**s in **hotspot/share/gc/shared/oopStorage.inline.hpp**:
 ```cpp
 // Support for serial iteration, always at a safepoint.
 // Provide const or non-const iteration, depending on whether Storage is
@@ -207,7 +204,7 @@ inline bool OopStorage::iterate_impl(F f, Storage* storage) {
   return true;
 }
 ```
-And then with each **Block** iterates over all stored **oops** in **_data** array:
+And then each **Block** iterates over all stored **oops** in **_data** array:
 ```cpp
 // Provide const or non-const iteration, depending on whether BlockPtr
 // is const Block* or Block*, respectively.
@@ -223,27 +220,112 @@ inline bool OopStorage::Block::iterate_impl(F f, BlockPtr block) {
   }
   return true;
 }
-```
-```cpp
 // Fixed-sized array of oops, plus bookkeeping data.
 // All blocks are in the storage's _active_array, at the block's _active_index.
-// Non-full blocks are in the storage's _allocation_list, linked through the
-// block's _allocation_list_entry.  Empty blocks are at the end of that list.
 class OopStorage::Block /* No base class, to avoid messing up alignment. */ {
-  // _data must be the first non-static data member, for alignment.
+  ...
   oop _data[BitsPerWord];
-  static const unsigned _data_pos = 0; // Position of _data.
-
   volatile uintx _allocated_bitmask; // One bit per _data element.
   ...
 }
 ```
+**Next step** is tricky - we need to mark all roots stored on Thread's stacks and internal JVM objects related to threads.
+Process starts from **Threads::oops_do()** method:
+```cpp
+// Operations on the Threads list for GC.  These are not explicitly locked,
+// but the garbage collector must provide a safe context for them to run.
+// In particular, these things should never be called when the Threads_lock
+// is held by some other thread. (Note: the Safepoint abstraction also
+// uses the Threads_lock to guarantee this property. It also makes sure that
+// all threads gets blocked when exiting or starting).
 
+void Threads::oops_do(OopClosure* f, CodeBlobClosure* cf) {
+  ALL_JAVA_THREADS(p) {
+    p->oops_do(f, cf);
+  }
+  VMThread::vm_thread()->oops_do(f, cf);
+}
+```
+We iterate over all Threads using *"the ugliest for loop the world has seen"*:
+```cpp
+// Possibly the ugliest for loop the world has seen. C++ does not allow
+// multiple types in the declaration section of the for loop. In this case
+// we are only dealing with pointers and hence can cast them. It looks ugly
+// but macros are ugly and therefore it's fine to make things absurdly ugly.
+#define DO_JAVA_THREADS(LIST, X)                                                                                          \
+    for (JavaThread *MACRO_scan_interval = (JavaThread*)(uintptr_t)PrefetchScanIntervalInBytes,                           \
+             *MACRO_list = (JavaThread*)(LIST),                                                                           \
+             **MACRO_end = ((JavaThread**)((ThreadsList*)MACRO_list)->threads()) + ((ThreadsList*)MACRO_list)->length(),  \
+             **MACRO_current_p = (JavaThread**)((ThreadsList*)MACRO_list)->threads(),                                     \
+             *X = (JavaThread*)prefetch_and_load_ptr((void**)MACRO_current_p, (intx)MACRO_scan_interval);                 \
+         MACRO_current_p != MACRO_end;                                                                                    \
+         MACRO_current_p++,                                                                                               \
+             X = (JavaThread*)prefetch_and_load_ptr((void**)MACRO_current_p, (intx)MACRO_scan_interval))
 
+// All JavaThreads
+#define ALL_JAVA_THREADS(X) DO_JAVA_THREADS(ThreadsSMRSupport::get_java_thread_list(), X)
+```
+and call **JavaThread::oops_do(OopClosure\* f, CodeBlobClosure\* cf)**:
+```
+void JavaThread::oops_do(OopClosure* f, CodeBlobClosure* cf) {
+  // Verify that the deferred card marks have been flushed.
+  assert(deferred_card_mark().is_empty(), "Should be empty during GC");
 
+  // Traverse the GCHandles
+  Thread::oops_do(f, cf);
 
+  assert((!has_last_Java_frame() && java_call_counter() == 0) ||
+         (has_last_Java_frame() && java_call_counter() > 0), "wrong java_sp info!");
 
+  if (has_last_Java_frame()) {
+    // Record JavaThread to GC thread
+    RememberProcessedThread rpt(this);
 
+    // traverse the registered growable array
+    if (_array_for_gc != NULL) {
+      for (int index = 0; index < _array_for_gc->length(); index++) {
+        f->do_oop(_array_for_gc->adr_at(index));
+      }
+    }
+
+    // Traverse the monitor chunks
+    for (MonitorChunk* chunk = monitor_chunks(); chunk != NULL; chunk = chunk->next()) {
+      chunk->oops_do(f);
+    }
+
+    // Traverse the execution stack
+    for (StackFrameStream fst(this); !fst.is_done(); fst.next()) {
+      fst.current()->oops_do(f, cf, fst.register_map());
+    }
+  }
+
+  // callee_target is never live across a gc point so NULL it here should
+  // it still contain a methdOop.
+
+  set_callee_target(NULL);
+
+  assert(vframe_array_head() == NULL, "deopt in progress at a safepoint!");
+  // If we have deferred set_locals there might be oops waiting to be
+  // written
+  GrowableArray<jvmtiDeferredLocalVariableSet*>* list = deferred_locals();
+  if (list != NULL) {
+    for (int i = 0; i < list->length(); i++) {
+      list->at(i)->oops_do(f);
+    }
+  }
+
+  // Traverse instance variables at the end since the GC may be moving things
+  // around using this function
+  f->do_oop((oop*) &_threadObj);
+  f->do_oop((oop*) &_vm_result);
+  f->do_oop((oop*) &_exception_oop);
+  f->do_oop((oop*) &_pending_async_exception);
+
+  if (jvmti_thread_state() != NULL) {
+    jvmti_thread_state()->oops_do(f);
+  }
+}
+```
 
 
 
