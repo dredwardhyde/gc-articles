@@ -274,13 +274,14 @@ void JavaThread::oops_do(OopClosure* f, CodeBlobClosure* cf) {
   ...
   if (has_last_Java_frame()) {
     ...
-    // traverse the registered growable array
+    // traverse the registered growable array - list of the protection domains on the current execution stack
     if (_array_for_gc != NULL) {
       for (int index = 0; index < _array_for_gc->length(); index++) {
         f->do_oop(_array_for_gc->adr_at(index));
       }
     }
-    // Traverse the monitor chunks
+    // Traverse the monitor chunks - off stack monitors allocated 
+    // during deoptimization and by JNI_MonitorEnter/Exit
     for (MonitorChunk* chunk = monitor_chunks(); chunk != NULL; chunk = chunk->next()) {
       chunk->oops_do(f);
     }
@@ -357,8 +358,8 @@ void JNIHandleBlock::oops_do(OopClosure* f) {
     current_chain = current_chain->pop_frame_link();
   }
 }
-```
-Each thread could hold arbitrary number of inflated locks - **ObjectMonitor** objects. All of them must be marked because they contain backward object pointers:
+```    
+Also each thread could hold arbitrary number of local inflated locks - **ObjectMonitor** objects. All of them must be marked by **ObjectSynchronizer::thread_local_used_oops_do()** method because they contain backward object pointers:
 ```cpp
 class ObjectMonitor {
  ...
@@ -366,6 +367,4 @@ class ObjectMonitor {
   ...
   void*     volatile _object;       // backward object pointer - strong root
 ```
-We mark those thread local inflated locks in **ObjectSynchronizer::thread_local_used_oops_do()** method.
-
-Next, we need to mark all 
+Next major step in **JavaThread::oops_do()** is traversal of execution stack of current thread.  
