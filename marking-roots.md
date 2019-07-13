@@ -459,8 +459,30 @@ void OopMapCache::lookup(const methodHandle& method, int bci, InterpreterOopMap*
   ...
 }
 ```
-For compiled frames, 
+For compiled frames we have a little bit different set of tools in Hotspot. First, **CodeCache** holds various pieces of generated code - compiled java methods, runtime stubs, transition frames, etc. The entries in the CodeCache are all CodeBlob's. So both profiled and non-profiled JIT-generated method (nmethods) are stored here. By checking **CodeCache::contains(pc())** in **frame::oops_do_internal()** we could tell if it is native method or not and process it appropriately in **frame::oops_code_blob_do()**:
 ```cpp
-ImmutableOopMapSet* _oop_maps;                 // OopMap for this CodeBlob
-```
+class frame {
+ private:
+  ...
+  CodeBlob* _cb; // CodeBlob that "owns" pc
+}
 
+void frame::oops_code_blob_do(OopClosure* f, CodeBlobClosure* cf, const RegisterMap* reg_map) {
+  if (_cb->oop_maps() != NULL) {
+    OopMapSet::oops_do(this, reg_map, f);
+    // Preserve potential arguments for a callee. We handle this by dispatching
+    // on the codeblob. For c2i, we do
+    if (reg_map->include_argument_oops()) {
+      _cb->preserve_callee_argument_oops(*this, reg_map, f);
+    }
+  }
+  ...
+  if (cf != NULL)
+    cf->do_code_blob(_cb);
+}
+```
+Each **CodeBlob** holds **ImmutableOopMapSet* \_oop_maps** - set of **OopMap** entries. **OopMapValue** represents a single **OopMap** entry and describes for a specific pc whether each register and frame stack slot is a reference to Java object or not. If it is reference  (**oop**) then we have to mark it, just as usual. **CodeBlob** is filled in **frame::frame()** constructor and could be updated by C1 or C2 compiler in **frame frame::sender(RegisterMap* map)** during various events like deoptimization.
+
+**Next step** of root marking in **MarkFromRootsTask::do_it()** is to mark all global **ObjectMonitor** objects by invoking **ObjectSynchronizer::oops_do**. This process also happens at the global safepoint.
+
+In **Management::oops_do()** we mark all roots stored in **MemoryService** and **ThreadService**. **MemoryService** provides VM-side monitoring and management support and holds references to **MemoryPool** and **MemoryManager** instances. Each **MemoryPool** holds references to **Sensor** Java objects - **\_usage_sensor** and **\_gc_usage_sensor** passed from **MemoryPoolImpl.setUsageThreshold()** method. **ThreadService** contains **ThreadSnapshot** objects with references to Java Thread. All the objects described above must be also marked as strong roots.
