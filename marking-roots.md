@@ -481,7 +481,7 @@ void frame::oops_code_blob_do(OopClosure* f, CodeBlobClosure* cf, const Register
     cf->do_code_blob(_cb);
 }
 ```
-Each **CodeBlob** holds **ImmutableOopMapSet\* \_oop_maps** - set of **OopMap** entries. **OopMapValue** represents a single **OopMap** entry and describes for a specific pc whether each register and frame stack slot is a reference to Java object or not. If it is reference  (**oop**) then we have to mark it, just as usual. **CodeBlob** is filled in **frame::frame()** constructor and could be updated by C1 or C2 compiler in **frame frame::sender(RegisterMap\* map)** during various events like deoptimization.
+Each **CodeBlob** holds **ImmutableOopMapSet\* \_oop_maps** - set of **OopMap** entries. **OopMapValue** represents a single **OopMap** entry and describes for a specific pc whether each register and frame stack slot is a reference to Java object or not. If it is reference  (**oop**) then we have to mark it, just as usual. **CodeCache** could be updated, for example, after compilation in C1 from **Compilation::install_code()** method or during deoptimization event.
 
 **Next step** of root marking in **MarkFromRootsTask::do_it()** is to mark all global **ObjectMonitor** objects by invoking **ObjectSynchronizer::oops_do**. This process also happens at the global safepoint.
 
