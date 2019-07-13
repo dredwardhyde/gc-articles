@@ -1,4 +1,4 @@
-## How does marking GC roots works in Hotspot?
+## How does marking GC roots work in Hotspot?
 
 In this article I’d like to talk a little about some interesting solutions that have found their way into the most popular JVM implementation in the world – Hotspot JVM, originally developed by Sun Microsystems and then refined by Oracle to the current state.
 
