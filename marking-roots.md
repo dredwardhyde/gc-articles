@@ -459,5 +459,8 @@ void OopMapCache::lookup(const methodHandle& method, int bci, InterpreterOopMap*
   ...
 }
 ```
-
+For compiled frames, 
+```cpp
+ImmutableOopMapSet* _oop_maps;                 // OopMap for this CodeBlob
+```
 
