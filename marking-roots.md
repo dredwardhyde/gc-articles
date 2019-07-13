@@ -486,3 +486,5 @@ Each **CodeBlob** holds **ImmutableOopMapSet\* \_oop_maps** - set of **OopMap** 
 **Next step** of root marking in **MarkFromRootsTask::do_it()** is to mark all global **ObjectMonitor** objects by invoking **ObjectSynchronizer::oops_do**. This process also happens at the global safepoint.
 
 In **Management::oops_do()** we mark all roots stored in **MemoryService** and **ThreadService**. **MemoryService** provides VM-side monitoring and management support and holds references to **MemoryPool** and **MemoryManager** instances. Each **MemoryPool** holds references to **Sensor** Java objects - **\_usage_sensor** and **\_gc_usage_sensor** passed from **MemoryPoolImpl.setUsageThreshold()** method. **ThreadService** contains **ThreadSnapshot** objects with references to Java Thread. All the objects described above must be also marked as strong roots.
+
+In **JvmtiExport::oops_do()** we mark all Java objects which references are transitively stored in **JvmtiBreakpointCache** and allocated directly from JVM TI. 
