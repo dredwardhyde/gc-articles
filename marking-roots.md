@@ -229,7 +229,7 @@ class OopStorage::Block /* No base class, to avoid messing up alignment. */ {
   ...
 }
 ```
-**Next step** is tricky - we need to mark all roots stored on Thread's stacks and internal JVM objects related to threads.
+**Next step** is tricky - we need to mark all root's references stored on Thread's stacks and internal JVM objects related to threads.
 Process starts from **Threads::oops_do()** method:
 ```cpp
 // Operations on the Threads list for GC.  These are not explicitly locked,
