@@ -182,7 +182,7 @@ class JNIHandles : AllStatic {
   ...
 }
 ```
-In general, **OopStorage** is container for thread-safe (sometimes concurrent) interactions with off-heap references to objects allocated in the Java heap. **_global_handles** contains JNI handles for ArrayOutOfBoundsException, ArrayStoreException, ClassCastException, classloaders, oop wrappers used by JIT compilers, compilers threads themselves, etc. Internally every **OopStorage** contains set of **Blocks** objects, and **Block** itself contains an **oop[]** and a bitmask indicating which entries are in use (have been allocated and not yet released). During garbage collection, collector must know about all OopStorage objects and their reference strength, and each OopStorage provides the garbage collector with support for iteration over all the allocated entries. So **oops_do()** on **OopStorage** eventually calls **iterate_impl()** method, which iterates over **Block**s in **hotspot/share/gc/shared/oopStorage.inline.hpp**:
+In general, **OopStorage** is container for thread-safe (sometimes concurrent) interactions with off-heap references to objects allocated in the Java heap. **\_global_handles** contains JNI handles for ArrayOutOfBoundsException, ArrayStoreException, ClassCastException, classloaders, oop wrappers used by JIT compilers, compilers threads themselves, etc. Internally every **OopStorage** contains set of **Blocks** objects, and **Block** itself contains an **oop[]** and a bitmask indicating which entries are in use (have been allocated and not yet released). During garbage collection, collector must know about all OopStorage objects and their reference strength, and each OopStorage provides the garbage collector with support for iteration over all the allocated entries. So **oops_do()** on **OopStorage** eventually calls **iterate_impl()** method, which iterates over **Block**s in **hotspot/share/gc/shared/oopStorage.inline.hpp**:
 ```cpp
 // Support for serial iteration, always at a safepoint.
 // Provide const or non-const iteration, depending on whether Storage is
@@ -204,7 +204,7 @@ inline bool OopStorage::iterate_impl(F f, Storage* storage) {
   return true;
 }
 ```
-And then each **Block** iterates over all stored **oops** in **_data** array:
+And then each **Block** iterates over all stored **oops** in **\_data** array:
 ```cpp
 // Provide const or non-const iteration, depending on whether BlockPtr
 // is const Block* or Block*, respectively.
@@ -481,7 +481,7 @@ void frame::oops_code_blob_do(OopClosure* f, CodeBlobClosure* cf, const Register
     cf->do_code_blob(_cb);
 }
 ```
-Each **CodeBlob** holds **ImmutableOopMapSet\* \_oop_maps** - set of **OopMap** entries. **OopMapValue** represents a single **OopMap** entry and describes for a specific pc whether each register and frame stack slot is a reference to Java object or not. If it is reference  (**oop**) then we have to mark it as strong root, just as usual.
+Each **CodeBlob** holds **ImmutableOopMapSet\* \_oop_maps** - set of **OopMap** entries. **OopMapValue** represents a single **OopMap** entry and describes for a specific pc whether each register and frame stack slot is a reference to Java object or not. If it is a reference  (**oop**) then we have to mark it as strong root, just as usual.
 
 **Next step** of roots marking in **MarkFromRootsTask::do_it()** is to mark all global **ObjectMonitor** objects by invoking **ObjectSynchronizer::oops_do**. This process also happens at the global safepoint.
 
