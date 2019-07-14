@@ -512,7 +512,7 @@ void SystemDictionaryShared::oops_do(OopClosure* f) {
   f->do_oop((oop*)&_shared_jar_manifests);
 }
 ```
-**invoke_method_table()** is called on **SymbolPropertyTable\* \_invoke_method_table**. **SymbolPropertyTable** is a system-internal mapping of symbols to pointers. For example, this table holds references to low-level intrinsic methods defined by  JVM. Entry to **SymbolPropertyTable** could be added in **SystemDictionary::find_method_handle_intrinsic(vmIntrinsics::ID iid, Symbol\* signature)** method during polymorphic method lookup at call site.
+**invoke_method_table()** is called on **SymbolPropertyTable\* \_invoke_method_table**. **SymbolPropertyTable** is a system-internal mapping of symbols to pointers. For example, this table holds references to low-level intrinsic methods defined by  JVM. For example, entry to **SymbolPropertyTable** could be added in **SystemDictionary::find_method_handle_intrinsic(vmIntrinsics::ID iid, Symbol\* signature)** method during polymorphic method lookup at call site.
 
 **ClassLoaderDataGraph::always_strong_cld_do(&cld_closure)** marks all Java objects references from **Chunk**s. Those objects are instances of java/lang/ClassLoader associated with current **ClassLoaderData**, constant pool arrays, Modules, etc. All objects have the same life cycle of the corresponding ClassLoader.
 ```cpp
