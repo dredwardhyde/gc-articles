@@ -459,7 +459,7 @@ void OopMapCache::lookup(const methodHandle& method, int bci, InterpreterOopMap*
   ...
 }
 ```
-For compiled frames we have a little bit different set of tools in Hotspot. First, **CodeCache** holds various pieces of generated code - compiled java methods, runtime stubs, transition frames, etc. The entries in the CodeCache are all CodeBlob's. So both profiled and non-profiled JIT-generated method (nmethods) are stored here. By checking **CodeCache::contains(pc())** in **frame::oops_do_internal()** we could tell if it is native method or not and process it appropriately in **frame::oops_code_blob_do()**:
+For compiled frames we have a little bit different set of tools in Hotspot. First, **CodeCache** holds various pieces of generated code - compiled java methods, runtime stubs, transition frames, etc. The entries in the CodeCache are all CodeBlob's. **CodeCache** could be updated, for example, after compilation by C1 in **Compilation::install_code()** method or during deoptimization event. So both profiled and non-profiled JIT-generated method (nmethods) are stored here. By checking **CodeCache::contains(pc())** in **frame::oops_do_internal()** we could tell if it is native method or not and process it appropriately in **frame::oops_code_blob_do()**:
 ```cpp
 class frame {
  private:
@@ -481,10 +481,34 @@ void frame::oops_code_blob_do(OopClosure* f, CodeBlobClosure* cf, const Register
     cf->do_code_blob(_cb);
 }
 ```
-Each **CodeBlob** holds **ImmutableOopMapSet\* \_oop_maps** - set of **OopMap** entries. **OopMapValue** represents a single **OopMap** entry and describes for a specific pc whether each register and frame stack slot is a reference to Java object or not. If it is reference  (**oop**) then we have to mark it, just as usual. **CodeCache** could be updated, for example, after compilation by C1 in **Compilation::install_code()** method or during deoptimization event.
+Each **CodeBlob** holds **ImmutableOopMapSet\* \_oop_maps** - set of **OopMap** entries. **OopMapValue** represents a single **OopMap** entry and describes for a specific pc whether each register and frame stack slot is a reference to Java object or not. If it is reference  (**oop**) then we have to mark it as strong root, just as usual.
 
-**Next step** of root marking in **MarkFromRootsTask::do_it()** is to mark all global **ObjectMonitor** objects by invoking **ObjectSynchronizer::oops_do**. This process also happens at the global safepoint.
+**Next step** of roots marking in **MarkFromRootsTask::do_it()** is to mark all global **ObjectMonitor** objects by invoking **ObjectSynchronizer::oops_do**. This process also happens at the global safepoint.
 
 In **Management::oops_do()** we mark all roots stored in **MemoryService** and **ThreadService**. **MemoryService** provides VM-side monitoring and management support and holds references to **MemoryPool** and **MemoryManager** instances. Each **MemoryPool** holds references to **Sensor** Java objects - **\_usage_sensor** and **\_gc_usage_sensor** passed from **MemoryPoolImpl.setUsageThreshold()** method. **ThreadService** contains **ThreadSnapshot** objects with references to Java Thread. All the objects described above must be also marked as strong roots.
 
 In **JvmtiExport::oops_do()** we mark all Java objects which references are transitively stored in **JvmtiBreakpointCache** and allocated directly from JVM TI. 
+
+**Next important step** of roots marking process is to identify all strong roots referenced from **SystemDictionary**.
+In **SystemDictionary::oops_do()** we mark VM-side mirrors of system and platform **ClassLoader**s, etc. See comments in code snippet below:
+```cpp
+void SystemDictionary::oops_do(OopClosure* f) {
+  // System ClassLoader
+  f->do_oop(&_java_system_loader);
+  // Platform ClassLoader
+  f->do_oop(&_java_platform_loader);
+  // Lock object for system class loader
+  f->do_oop(&_system_loader_lock_obj);
+  CDS_ONLY(SystemDictionaryShared::oops_do(f);)
+
+  // Visit extra methods
+  invoke_method_table()->oops_do(f);
+}
+void SystemDictionaryShared::oops_do(OopClosure* f) {
+  // These _shared_xxxs arrays are used to initialize the java.lang.Package and
+  // java.security.ProtectionDomain objects associated with each shared class.
+  f->do_oop((oop*)&_shared_protection_domains);
+  f->do_oop((oop*)&_shared_jar_urls);
+  f->do_oop((oop*)&_shared_jar_manifests);
+}
+```
