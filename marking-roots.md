@@ -514,8 +514,45 @@ void SystemDictionaryShared::oops_do(OopClosure* f) {
 ```
 **invoke_method_table()** is called on **SymbolPropertyTable\* \_invoke_method_table**. **SymbolPropertyTable** is a system-internal mapping of symbols to pointers. For example, this table holds references to low-level intrinsic methods defined by  JVM. Entry to **SymbolPropertyTable** could be added in **SystemDictionary::find_method_handle_intrinsic(vmIntrinsics::ID iid, Symbol\* signature)** method during polymorphic method lookup at call site.
 
-<<<Cover **ClassLoaderDataGraph::always_strong_cld_do(&cld_closure)** here >>>
-
+**ClassLoaderDataGraph::always_strong_cld_do(&cld_closure)** marks all Java objects references from **Chunk**s. Those objects are instances of java/lang/ClassLoader associated with current **ClassLoaderData**, constant pool arrays, Modules, etc. All objects have the same life cycle of the corresponding ClassLoader.
+```cpp
+void ClassLoaderDataGraph::always_strong_cld_do(CLDClosure* cl) {
+  assert_locked_or_safepoint_weak(ClassLoaderDataGraph_lock);
+  if (ClassUnloading) {
+    roots_cld_do(cl, NULL);
+  } else {
+    cld_do(cl);
+  }
+}
+void ClassLoaderDataGraph::roots_cld_do(CLDClosure* strong, CLDClosure* weak) {
+  ...
+  for (ClassLoaderData* cld = _head;  cld != NULL; cld = cld->_next) {
+    CLDClosure* closure = cld->keep_alive() ? strong : weak;
+    if (closure != NULL) {
+      closure->do_cld(cld);
+    }
+  }
+}
+void ClassLoaderData::oops_do(OopClosure* f, int claim_value, bool clear_mod_oops) {
+  ...
+  ChunkedHandleList _handles.oops_do(f);
+}
+inline void ClassLoaderData::ChunkedHandleList::oops_do_chunk(OopClosure* f, Chunk* c, const juint size) {
+  for (juint i = 0; i < size; i++) {
+    if (c->_data[i] != NULL) {
+      // mark contents of _data array of each Chunk in ChunkedHandleList
+      f->do_oop(&c->_data[i]);
+    }
+  }
+}
+struct Chunk : public CHeapObj<mtClass> {
+      ...
+      oop _data[CAPACITY];
+      ...
+      Chunk* _next;
+      ...
+    };
+```   
 And as the final step of marking roots, **AOTLoader::oops_do()** must mark all referenced Java objects. **AOTLoader** is used for ahead-of-time compilation that was added in [JEP 295](https://openjdk.java.net/jeps/295). **AOTCompiledMethod** objects hold references to enclosing class and **AOTCodeHeap** contains Java object pointers **\_oop\_got**, patched by Hotspot.
 ```cpp
 void AOTCodeHeap::oops_do(OopClosure* f) {
