@@ -93,7 +93,7 @@ void MarkFromRootsTask::do_it(GCTaskManager* manager, uint which) {
 }
 ```
 
-**First step** in the method above is to mark some objects in **Universe** - namespace holding known system classes and objects in the VM. Whole initial world initialization, like loading basic classes, **vmSymbols::initialize()**, **SystemDictionary::initialize()** and various necessary object allocations happens in **Universe::genesis()**.
+**First step** in the method above is to mark some objects in **Universe** - namespace holding known system classes and objects in the VM. Whole initial world initialization, like loading basic classes, invocation of **vmSymbols::initialize()**, **SystemDictionary::initialize()** and various necessary object allocations happens in **Universe::genesis()**.
 So we need to mark some of them in **oops_do** method in **hotspot/share/memory/universe.cpp**
 ```cpp
 void Universe::oops_do(OopClosure* f) {
