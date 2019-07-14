@@ -512,3 +512,26 @@ void SystemDictionaryShared::oops_do(OopClosure* f) {
   f->do_oop((oop*)&_shared_jar_manifests);
 }
 ```
+**invoke_method_table()** is called on **SymbolPropertyTable\* \_invoke_method_table**. **SymbolPropertyTable** is a system-internal mapping of symbols to pointers. For example, this table holds references to low-level intrinsic methods defined by  JVM. Entry to **SymbolPropertyTable** could be added in **SystemDictionary::find_method_handle_intrinsic(vmIntrinsics::ID iid, Symbol\* signature)** method during polymorphic method lookup at call site.
+
+<<<Cover **ClassLoaderDataGraph::always_strong_cld_do(&cld_closure)** here >>>
+
+And as the final step of marking roots, **AOTLoader::oops_do()** must mark all referenced Java objects. **AOTLoader** is used for ahead-of-time compilation that was added in [JEP 295](https://openjdk.java.net/jeps/295). **AOTCompiledMethod** objects hold references to enclosing class and **AOTCodeHeap** contains Java object pointers **\_oop\_got**, patched by Hotspot.
+```cpp
+void AOTCodeHeap::oops_do(OopClosure* f) {
+  for (int i = 0; i < _oop_got_size; i++) {
+    oop* p = &_oop_got[i];
+    if (*p == NULL)  continue;  // skip non-oops
+    f->do_oop(p);
+  }
+  for (int index = 0; index < _method_count; index++) {
+    if (_code_to_aot[index]._state != in_use) {
+      continue; // Skip uninitialized entries.
+    }
+    AOTCompiledMethod* aot = _code_to_aot[index]._aot;
+    aot->do_oops(f);
+  }
+}
+```
+
+## Conclusion
