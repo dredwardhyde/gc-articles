@@ -575,3 +575,54 @@ void AOTCodeHeap::oops_do(OopClosure* f) {
 
 Even the beginning of GC cycle - process of marking roots - is quite complicated. Most of the time, people prefer to barely mention this fact while talking about garbage collectors in Hotspot. Its designers and implementors decided to make some steps described above at global safepoint. And *duration* of this steps (and so is safepoint, without additional steps not related to garbage collection) greatly depends on your code style and structure of your application. More threads and higher average depth of execution stacks, more local variables - will make global safepoint considerably longer.  
 In enterprise deployments, those numbers are easily achievable - all applications on a server like Wildfly share same heap and could have 1000-2000 active threads with average depth of 40-50 frames.
+
+For example, on the following OpenJDK:
+```sh
+openjdk version "1.8.0-internal"
+OpenJDK Runtime Environment (build 1.8.0-internal-_2019_07_14_21_46-b00)
+OpenJDK 64-Bit Server VM (build 25.71-b00, mixed mode)
+```
+and JVM options:
+```sh
+-XX:+UseShenandoahGC -verbose:gc -Xms512m -Xmx2048m
+```
+And on Wildfly 10.1 with 4 applications running - 304 Java threads total & average execution stack depth around 15 frames,   I've got quite interesting results:  
+  
+Trigger: Free (160M) is below minimum threshold (204M)  
+\[Concurrent reset 1784M->1784M(2048M), 2.665 ms]  
+**\[Pause Init Mark (process weakrefs), 5.624 ms]**  
+\[Concurrent marking (process weakrefs) 1807M->1807M(2048M), 57.721 ms]  
+\[Concurrent precleaning 1807M->1807M(2048M), 0.384 ms]  
+**\[Pause Final Mark (process weakrefs), 206.420 ms]**  
+\[Concurrent cleanup 1808M->1808M(2048M), 0.041 ms]  
+\[Concurrent evacuation 1808M->1809M(2048M), 0.511 ms]  
+**\[Pause Init Update Refs, 0.050 ms]**  
+\[Concurrent update references 1809M->1810M(2048M), 71.985 ms]  
+**\[Pause Final Update Refs, 2.003 ms]**  
+\[Concurrent cleanup 1810M->1806M(2048M), 0.052 ms]  
+  
+Trigger: Time since last GC (300001 ms) is larger than guaranteed interval (300000 ms)  
+\[Concurrent reset 1222M->1222M(1678M), 2.952 ms]  
+**\[Pause Init Mark, 14.636 ms]**  
+\[Concurrent marking 1222M->1222M(1678M), 102.393 ms]  
+**\[Pause Final Mark, 3.152 ms]**  
+\[Concurrent cleanup 1222M->852M(1678M), 0.083 ms]  
+\[Concurrent evacuation 852M->853M(1678M), 1.103 ms]  
+**\[Pause Init Update Refs, 0.034 ms]**  
+\[Concurrent update references 853M->853M(1678M), 38.370 ms]  
+**\[Pause Final Update Refs, 2.226 ms]**  
+\[Concurrent cleanup 853M->481M(1678M), 0.073 ms]  
+   
+Trigger: Time since last GC (300001 ms) is larger than guaranteed interval (300000 ms)  
+\[Concurrent reset 1242M->1242M(1257M), 3.026 ms]  
+**\[Pause Init Mark, 12.033 ms]**  
+\[Concurrent marking 1242M->1242M(1257M), 104.882 ms]  
+**\[Pause Final Mark, 3.100 ms]**  
+\[Concurrent cleanup 1243M->871M(1257M), 0.087 ms]  
+\[Concurrent evacuation 871M->873M(1259M), 1.309 ms]  
+**\[Pause Init Update Refs, 0.036 ms]**  
+\[Concurrent update references 873M->873M(1259M), 46.671 ms]  
+**\[Pause Final Update Refs, 2.208 ms]**  
+\[Concurrent cleanup 873M->485M(1259M), 0.046 ms]  
+  
+As you can see, **Init Mark pause** (which includes process of marking roots) is predominant here.  
