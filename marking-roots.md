@@ -1,5 +1,7 @@
 ## How does Hotspot JVM scan the root set during garbage collection?
 
+*Note: I’m not involved in OpenJDK development in any way. All views expressed below are my own.*
+
 In my first article I’d like to talk about some interesting solutions that have found their way into the most popular JVM implementation in the world – Hotspot JVM, originally developed by Sun Microsystems and then refined by Oracle to the current state.
 
 Typical JVM implementation consists of multiple subsystems, like various parsers, class loaders, interpreters, JIT compilers and so on, but possibly, the most complicated subsystem is related to garbage collection. 
@@ -577,18 +579,18 @@ void AOTCodeHeap::oops_do(OopClosure* f) {
 Even the beginning of GC cycle - process of marking roots - is quite complicated. Most of the time, people prefer to barely mention this fact while talking about garbage collectors in Hotspot. Its designers and implementors decided to make some steps described above at global safepoint. And *duration* of this steps (and so is safepoint, without additional steps not related to garbage collection) greatly depends on your code style and structure of your application. More threads and higher average depth of execution stacks, more local variables - will make global safepoint considerably longer.  
 In enterprise deployments, those numbers are easily achievable - all applications on a server like Wildfly share same heap and could have up to 1000 threads with average depth of 20-40 frames.
 
-For example, on the following OpenJDK:
+For example, on the following OpenJDK release:
 ```sh
 openjdk version "1.8.0-internal"
 OpenJDK Runtime Environment (build 1.8.0-internal-_2019_07_14_21_46-b00)
 OpenJDK 64-Bit Server VM (build 25.71-b00, mixed mode)
 ```
-and JVM options:
+and those JVM options:
 ```sh
 -XX:+UseShenandoahGC -verbose:gc -Xms512m -Xmx2048m
 ```
-And on single Wildfly 10.1 instance with 4 idle applications running - 304 Java threads total  
-and average execution stack depth around 20 frames, I've got quite interesting results:  
+and single Wildfly 10.1 instance with 4 applications running - 304 Java threads total  
+and average execution stack depth around 20 frames, I've got those results:  
   
 Trigger: Time since last GC (300001 ms) is larger than guaranteed interval (300000 ms)  
 \[Concurrent reset 1222M->1222M(1678M), 2.952 ms]  
@@ -614,4 +616,8 @@ Trigger: Time since last GC (300001 ms) is larger than guaranteed interval (3000
 **\[Pause Final Update Refs, 2.208 ms]**  
 \[Concurrent cleanup 873M->485M(1259M), 0.046 ms]  
   
-As you can see, **Init Mark pause** (which includes process of marking roots) is predominant pause here. 
+As you can see, **Init Mark pause** (which includes process of marking roots) is predominant pause here.
+
+In the current state, there is a room for further improvements towards making process of scanning the root set concurrent, possibly by stopping each thread individually. In my personal view, duration of garbage collection pauses should be dependent on some internal metrics of the heap, like its size or number of live objects. This will reduce duration of the biggest STW (stop-the-world) pause in GC cycle while using the most advanced collectors, like Shenandoah.
+
+Currently, this STW technique is used in both Hotspot and OpenJ9 implementations, but I hope this will change in observable future.
