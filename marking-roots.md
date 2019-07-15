@@ -574,7 +574,7 @@ void AOTCodeHeap::oops_do(OopClosure* f) {
 ## Conclusion
 
 Even the beginning of GC cycle - process of marking roots - is quite complicated. Most of the time, people prefer to barely mention this fact while talking about garbage collectors in Hotspot. Its designers and implementors decided to make some steps described above at global safepoint. And *duration* of this steps (and so is safepoint, without additional steps not related to garbage collection) greatly depends on your code style and structure of your application. More threads and higher average depth of execution stacks, more local variables - will make global safepoint considerably longer.  
-In enterprise deployments, those numbers are easily achievable - all applications on a server like Wildfly share same heap and could have 1000-2000 active threads with average depth of 40-50 frames.
+In enterprise deployments, those numbers are easily achievable - all applications on a server like Wildfly share same heap and could have up to 1000 threads with average depth of 20-40 frames.
 
 For example, on the following OpenJDK:
 ```sh
@@ -586,7 +586,7 @@ and JVM options:
 ```sh
 -XX:+UseShenandoahGC -verbose:gc -Xms512m -Xmx2048m
 ```
-And on Wildfly 10.1 with 4 applications running - 304 Java threads total & average execution stack depth around 15 frames,   I've got quite interesting results:  
+And on Wildfly 10.1 with 4 applications running - 304 Java threads total & average execution stack depth around 20 frames,   I've got quite interesting results:  
   
 Trigger: Free (160M) is below minimum threshold (204M)  
 \[Concurrent reset 1784M->1784M(2048M), 2.665 ms]  
