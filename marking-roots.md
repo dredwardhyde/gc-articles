@@ -1,4 +1,4 @@
-## How does marking GC roots work in Hotspot?
+## How does Hotspot JVM scan the root set during garbage collection?
 
 In my first article I’d like to talk about some interesting solutions that have found their way into the most popular JVM implementation in the world – Hotspot JVM, originally developed by Sun Microsystems and then refined by Oracle to the current state.
 
