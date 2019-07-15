@@ -586,7 +586,8 @@ and JVM options:
 ```sh
 -XX:+UseShenandoahGC -verbose:gc -Xms512m -Xmx2048m
 ```
-And on Wildfly 10.1 with 4 applications running - 304 Java threads total & average execution stack depth around 20 frames,   I've got quite interesting results:  
+And on Wildfly 10.1 with 4 idle applications running - 304 Java threads total  
+and average execution stack depth around 20 frames, I've got quite interesting results:  
   
 Trigger: Time since last GC (300001 ms) is larger than guaranteed interval (300000 ms)  
 \[Concurrent reset 1222M->1222M(1678M), 2.952 ms]  
