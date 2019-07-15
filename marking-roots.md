@@ -1,13 +1,13 @@
 ## How does marking GC roots work in Hotspot?
 
-In this article I’d like to talk a little about some interesting solutions that have found their way into the most popular JVM implementation in the world – Hotspot JVM, originally developed by Sun Microsystems and then refined by Oracle to the current state.
+In my first article I’d like to talk about some interesting solutions that have found their way into the most popular JVM implementation in the world – Hotspot JVM, originally developed by Sun Microsystems and then refined by Oracle to the current state.
 
 Typical JVM implementation consists of multiple subsystems, like various parsers, class loaders, interpreters, JIT compilers and so on, but possibly, the most complicated subsystem is related to garbage collection. 
 
 **First**, the only purpose of JVM runtime is to execute compatible bytecode, that is to allocate and destroy objects, invoke methods and provide system resources – and all of it – by strictly following JLS rules. 
-So, runtime is all about manipulating and executing bytecode in the most effective way, and bytecode itself consists of classes and methods. In practice, you have to solve many wonderful engineering problems to manipulate them correctly. One of such challenges – is to clean garbage – unreachable objects, because we all remember that Java is a language with automatic memory management. Class instances - objects – small allocated regions of heap with header and pointer to it – are everywhere in runtime and therefore garbage collector has to know about everything that happens during bytecode execution and must be aware about various code manipulations like JIT compiling, optimizations and object's locking. So, code related to garbage collection is almost everywhere in JVM implementations and engineers have to keep that in mind while implementing new features. 
+So, runtime is all about manipulating and executing bytecode in the most effective way, while bytecode itself consists of classes and methods. In practice, you have to solve many wonderful engineering problems to manipulate it correctly. One of  challenges is to clean garbage – unreachable objects - because Java is a language with automatic memory management. Class instances - objects – small allocated regions of heap with its own header and pointers to it – are everywhere in runtime and therefore garbage collector has to know about everything that happens during bytecode execution and must be aware about various code manipulations like JIT compiling, optimizations and object's locking. So, code related to garbage collection is almost everywhere in JVM implementation and engineers have to keep that in mind while implementing new features.
 
-**Second**, runtime environment must execute code very effectively – with minimal overhead - and even change that code in certain ways to make its execution faster, because, often enough, developers do not think about performance until it’s too late. Optimizations in garbage collections come in two ways – try not to create new garbage or eliminate it in fastest way possible. First type could be done by JIT compiler – it’s called escape analysis and it allows JIT to allocate some objects on stack instead of heap – so object will be destroyed along with enclosing method frame. But burden of second class of optimizations lies completely on the shoulders of garbage collector's solution architects and developers.
+**Second**, runtime environment must execute code very effectively – with minimal performance penalty and without noticeable hiccups - and even change that code in certain ways to make its execution faster, because, often enough, developers do not think about performance until it’s too late. Optimizations in garbage collections come in two ways – try not to create new garbage or eliminate it in fastest way possible. First type could be done by JIT compiler – it’s called escape analysis and it allows JIT to allocate some objects on stack instead of heap – so object will be destroyed along with enclosing method frame. But burden of second class of optimizations lies completely on the shoulders of garbage collector's solution architects and developers.
 
 ### What steps typical GC cycle consists of?
 
@@ -33,7 +33,7 @@ In Hotspot roots are following objects:
 - For each java thread then all locals and JNI local references on the thread's execution stack
 - All visible/explainable objects from Universes::oops_do
 
-Later I will explain every step in details using Parallel Garbage collector as an example because of very simple and readable implementation.
+Later I will explain every step in details using Parallel Garbage collector as an example because of its very simple and readable implementation.
 
 Marking roots in Parallel GC starts from method **do_it** in **hotspot/share/gc/parallel/pcTasks.cpp**
 ```cpp
@@ -167,8 +167,9 @@ void Universe::oops_do(OopClosure* f) {
   debug_only(f->do_oop((oop*)&_fullgc_alot_dummy_array);)
 }
 ```
-**Second step** is to mark global JNI references by JNI handles in **hotspot/share/runtime/jniHandles.cpp**.
+**Second step** is to mark references in global JNI handles:
 ```cpp
+// hotspot/share/runtime/jniHandles.cpp
 void JNIHandles::oops_do(OopClosure* f) {
   global_handles()->oops_do(f);
 }
@@ -182,7 +183,7 @@ class JNIHandles : AllStatic {
   ...
 }
 ```
-In general, **OopStorage** is container for thread-safe (sometimes concurrent) interactions with off-heap references to objects allocated in the Java heap. **\_global_handles** contains JNI handles for ArrayOutOfBoundsException, ArrayStoreException, ClassCastException, classloaders, oop wrappers used by JIT compilers, compilers threads themselves, etc. Internally every **OopStorage** contains set of **Blocks** objects, and **Block** itself contains an **oop[]** and a bitmask indicating which entries are in use (have been allocated and not yet released). During garbage collection, collector must know about all OopStorage objects and their reference strength, and each OopStorage provides the garbage collector with support for iteration over all the allocated entries. So **oops_do()** on **OopStorage** eventually calls **iterate_impl()** method, which iterates over **Block**s in **hotspot/share/gc/shared/oopStorage.inline.hpp**:
+In general, **OopStorage** is container for thread-safe (sometimes concurrent) interactions with off-heap references to objects allocated in the Java heap. **\_global_handles** contains JNI handles for ArrayOutOfBoundsException, ArrayStoreException, ClassCastException, classloaders, oop wrappers used by JIT compilers, compilers threads themselves, etc. Internally every **OopStorage** contains set of **Blocks** objects, and **Block** itself contains an **oop[]** array and a bitmask indicating which entries are in use (have been allocated and not yet released). During garbage collection, collector must know about all **OopStorage** objects and their reference strength, and each **OopStorage** provides the garbage collector with support for iteration over all the allocated entries. So **oops_do()** on **OopStorage** eventually calls **iterate_impl()** method, which iterates over **Block**s in **hotspot/share/gc/shared/oopStorage.inline.hpp**:
 ```cpp
 // Support for serial iteration, always at a safepoint.
 // Provide const or non-const iteration, depending on whether Storage is
@@ -229,7 +230,7 @@ class OopStorage::Block /* No base class, to avoid messing up alignment. */ {
   ...
 }
 ```
-**Next step** is tricky - we need to mark all root's references stored on Thread's stacks and internal JVM objects related to threads.
+**Next step** is tricky - we need to mark all Java object references stored on Thread's stacks and internal JVM objects related to threads.
 Process starts from **Threads::oops_do()** method:
 ```cpp
 // Operations on the Threads list for GC.  These are not explicitly locked,
@@ -309,7 +310,7 @@ void JavaThread::oops_do(OopClosure* f, CodeBlobClosure* cf) {
   }
 }
 ```
-In **Thread::oops_do()** we mark all active JNI handles, possible **\_pending_exception** that is about to be thrown, all thread local handles in **HandleArea\* \_handle_area** reserved for allocation of handles within the VM and thread local monitors:
+In **Thread::oops_do()** we mark all active JNI handles, possible **\_pending_exception**, all thread-local handles in **HandleArea\* \_handle_area**, reserved for allocation of handles within the VM and thread-local monitors:
 ```cpp
 void Thread::oops_do(OopClosure* f, CodeBlobClosure* cf) {
   active_handles()->oops_do(f);
@@ -459,7 +460,7 @@ void OopMapCache::lookup(const methodHandle& method, int bci, InterpreterOopMap*
   ...
 }
 ```
-For compiled frames we have a little bit different set of tools in Hotspot. First, **CodeCache** holds various pieces of generated code - compiled java methods, runtime stubs, transition frames, etc. The entries in the CodeCache are all CodeBlob's. **CodeCache** could be updated, for example, after compilation by C1 in **Compilation::install_code()** method or during deoptimization event. So both profiled and non-profiled JIT-generated method (nmethods) are stored here. By checking **CodeCache::contains(pc())** in **frame::oops_do_internal()** we could tell if it is native method or not and process it appropriately in **frame::oops_code_blob_do()**:
+For compiled frames we have a little different set of tools. First, **CodeCache** holds various pieces of generated code - compiled java methods, runtime stubs, transition frames, etc. The entries in the CodeCache are all CodeBlob's. **CodeCache** could be updated, for example, after compilation by C1 in **Compilation::install_code()** method or during deoptimization event. So both profiled and non-profiled JIT-generated method (nmethods) are stored here. By checking **CodeCache::contains(pc())** in **frame::oops_do_internal()** we could tell if it is native method or not and process it appropriately in **frame::oops_code_blob_do()**:
 ```cpp
 class frame {
  private:
