@@ -588,19 +588,6 @@ and JVM options:
 ```
 And on Wildfly 10.1 with 4 applications running - 304 Java threads total & average execution stack depth around 20 frames,   I've got quite interesting results:  
   
-Trigger: Free (160M) is below minimum threshold (204M)  
-\[Concurrent reset 1784M->1784M(2048M), 2.665 ms]  
-**\[Pause Init Mark (process weakrefs), 5.624 ms]**  
-\[Concurrent marking (process weakrefs) 1807M->1807M(2048M), 57.721 ms]  
-\[Concurrent precleaning 1807M->1807M(2048M), 0.384 ms]  
-**\[Pause Final Mark (process weakrefs), 206.420 ms]**  
-\[Concurrent cleanup 1808M->1808M(2048M), 0.041 ms]  
-\[Concurrent evacuation 1808M->1809M(2048M), 0.511 ms]  
-**\[Pause Init Update Refs, 0.050 ms]**  
-\[Concurrent update references 1809M->1810M(2048M), 71.985 ms]  
-**\[Pause Final Update Refs, 2.003 ms]**  
-\[Concurrent cleanup 1810M->1806M(2048M), 0.052 ms]  
-  
 Trigger: Time since last GC (300001 ms) is larger than guaranteed interval (300000 ms)  
 \[Concurrent reset 1222M->1222M(1678M), 2.952 ms]  
 **\[Pause Init Mark, 14.636 ms]**  
