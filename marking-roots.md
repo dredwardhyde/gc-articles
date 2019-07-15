@@ -587,7 +587,7 @@ and JVM options:
 ```sh
 -XX:+UseShenandoahGC -verbose:gc -Xms512m -Xmx2048m
 ```
-And on Wildfly 10.1 with 4 idle applications running - 304 Java threads total  
+And on single Wildfly 10.1 instance with 4 idle applications running - 304 Java threads total  
 and average execution stack depth around 20 frames, I've got quite interesting results:  
   
 Trigger: Time since last GC (300001 ms) is larger than guaranteed interval (300000 ms)  
@@ -614,4 +614,4 @@ Trigger: Time since last GC (300001 ms) is larger than guaranteed interval (3000
 **\[Pause Final Update Refs, 2.208 ms]**  
 \[Concurrent cleanup 873M->485M(1259M), 0.046 ms]  
   
-As you can see, **Init Mark pause** (which includes process of marking roots) is predominant here.  
+As you can see, **Init Mark pause** (which includes process of marking roots) is predominant pause here. 
